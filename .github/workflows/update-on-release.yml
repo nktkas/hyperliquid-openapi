@@ -1,0 +1,59 @@
+name: Update on SDK Release
+
+on:
+  repository_dispatch:
+    types: [sdk-release]
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run update
+        env:
+          GITBOOK_TOKEN: ${{ secrets.GITBOOK_TOKEN }}
+          GITBOOK_ORG_ID: ${{ secrets.GITBOOK_ORG_ID }}
+        run: deno run -A update.ts
+
+      - name: Get SDK version
+        id: sdk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(gh release view --repo nktkas/hyperliquid --json tagName -q .tagName)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "SDK version: $VERSION"
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: update OpenAPI from SDK ${{ steps.sdk.outputs.version }}"
+          title: "Update OpenAPI from SDK ${{ steps.sdk.outputs.version }}"
+          body: |
+            Automated update triggered by new SDK release.
+
+            SDK version: ${{ steps.sdk.outputs.version }}
+          branch: auto-update-openapi
+          delete-branch: true

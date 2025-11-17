@@ -1,0 +1,38 @@
+name: SDK Release Trigger
+
+on:
+  schedule:
+    # Check for new releases every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check latest SDK release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST=$(gh release view --repo nktkas/hyperliquid --json tagName -q .tagName)
+          CURRENT=$(gh api repos/nktkas/hyperliquid-openapi/commits?per_page=100 --jq '.[].commit.message' | grep -oP 'SDK v\K[^\s]+' | head -n1 || echo "")
+          echo "latest_version=$LATEST" >> $GITHUB_OUTPUT
+          echo "current_version=v$CURRENT" >> $GITHUB_OUTPUT
+          echo "Latest SDK version: $LATEST"
+          echo "Current version in repo: v$CURRENT"
+          if [ "$LATEST" != "v$CURRENT" ] && [ -n "$LATEST" ]; then
+            echo "new_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "new_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger update workflow
+        if: steps.release.outputs.new_release == 'true'
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: sdk-release
