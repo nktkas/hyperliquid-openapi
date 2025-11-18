@@ -5,6 +5,6 @@ OpenAPI for [Hyperliquid API](https://hyperliquid.gitbook.io/hyperliquid-docs/fo
 
 ## Features
 
-- **Auto-synced**: Automatically updated via CI when the [TypeScript SDK](https://github.com/nktkas/hyperliquid) changes
+- **Auto-synced**: Automatically updated via [CI](https://github.com/nktkas/hyperliquid-openapi/actions) when the [TypeScript SDK](https://github.com/nktkas/hyperliquid/releases) changes
 - **Complete coverage**: Full set of Hyperliquid APIs, including undocumented endpoints
 - **AI-integrated**: Native GitBook MCP support for AI assistant integration
