@@ -253,6 +253,18 @@ export async function jsonSchemasToOpenAPIs(schemas: AllSchemas): Promise<OpenAP
                   description: response?.description || "",
                   content: { "application/json": { schema: openapiResponse } },
                 },
+                "422": {
+                  description: "Failed to deserialize the JSON body into the target type",
+                  content: { "text/plain": { schema: { type: "string" } } },
+                },
+                ...(endpoint === "info"
+                  ? {
+                    "500": {
+                      description: "Internal Server Error",
+                      content: { "application/json": { schema: { type: "null" } } },
+                    },
+                  }
+                  : {}),
               },
             },
           },
