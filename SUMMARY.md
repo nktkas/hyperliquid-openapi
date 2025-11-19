@@ -454,6 +454,17 @@
       spec:
         ref:
           kind: openapi
+          spec: hl-exchange-validatorL1Stream
+    ```
+  - ```yaml
+    type: builtin:openapi
+    props:
+      models: false
+      downloadLink: false
+    dependencies:
+      spec:
+        ref:
+          kind: openapi
           spec: hl-exchange-vaultDistribute
     ```
   - ```yaml
