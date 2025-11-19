@@ -8,83 +8,61 @@ import * as hl from "@nktkas/hyperliquid";
 import * as hlInfo from "@nktkas/hyperliquid/api/info";
 import * as hlExchange from "@nktkas/hyperliquid/api/exchange";
 import type { AbstractWallet } from "@nktkas/hyperliquid/signing";
-import { doc } from "@deno/doc";
-import { type ConversionConfig, JSONSchema7, toJsonSchema } from "@valibot/to-json-schema";
+import { type ConversionConfig, type JSONSchema7, toJsonSchema } from "@valibot/to-json-schema";
 
 type Endpoint = "info" | "exchange";
 
 type AllSchemas = Record<Endpoint, Record<string, { request: JSONSchema7; response: JSONSchema7 }>>;
 
-/**
- * Get all request and response JSON Schemas from the TypeScript SDK
- * @returns object containing all schemas for info and exchange endpoints
- */
-export async function getAllSchemas(): Promise<AllSchemas> {
-  console.log("[Schemas] Starting schema extraction...");
+export function getAllSchemas(): AllSchemas {
+  console.log("[Schemas] Starting to extract schemas...");
 
   // Configurations
   const endpoints = ["info", "exchange"] as const;
   const skippedMethods = ["multiSig"];
-
-  // Main extraction logic
-
-  const results: AllSchemas = { info: {}, exchange: {} };
+  const toJsonConfig: ConversionConfig = {
+    errorMode: "ignore",
+    typeMode: "output",
+    overrideSchema: ({ jsonSchema }) => {
+      if ("default" in jsonSchema) {
+        delete jsonSchema.default;
+      }
+      return undefined;
+    },
+  };
 
   // Iterate over each endpoint
+  const results: AllSchemas = { info: {}, exchange: {} };
   for (const endpoint of endpoints) {
-    console.log(`[Schemas] Processing endpoint: ${endpoint}`);
+    // Select appropriate API module
+    const api = endpoint === "info" ? hlInfo : hlExchange;
+
     // Extract methods for the SDK client
     const methods = getAllMethodsFromClient(endpoint);
 
     // Iterate over each method
-    let processedCount = 0;
     for (const method of methods) {
       // Skip specified methods
-      if (skippedMethods.includes(method)) {
-        console.log(`[Schemas] Skipping ${endpoint}/${method}`);
-        continue;
-      }
-
-      // Extracting schema names from SDK source code
-      const filePath = `/api/${endpoint}/${method}.ts`;
-      const functionInfo = await extractFunctionSchema(filePath, method, endpoint);
-      processedCount++;
-      console.log(
-        `[Schemas] Extracted ${endpoint}/${method} (${processedCount}/${
-          methods.length - skippedMethods.filter((s) => methods.includes(s)).length
-        })`,
-      );
-
-      // Get schemas from imported SDK
-
-      // @ts-ignore - too hard type for TypeScript to infer
-      const api = endpoint === "info" ? hlInfo : hlExchange;
-      const toJsonConfig: ConversionConfig = {
-        errorMode: "ignore",
-        typeMode: "output",
-        overrideSchema: ({ jsonSchema }) => {
-          if ("default" in jsonSchema) {
-            delete (jsonSchema as Record<string, unknown>).default;
-          }
-          return undefined;
-        },
-      };
+      if (skippedMethods.includes(method)) continue;
 
       // Convert valibot schemas to JSON Schemas
-      const RequestVSchemas = api[functionInfo.request as keyof typeof api] as any;
+      const upperMethod = replaceFirstCharToUpperCase(method);
+
+      const RequestVSchemas = api[upperMethod + "Request" as keyof typeof api] as any;
       const RequestJSchema = toJsonSchema(RequestVSchemas, toJsonConfig);
 
-      const ResponseVSchemas = api[functionInfo.response as keyof typeof api] as any;
+      const ResponseVSchemas = api[upperMethod + "Response" as keyof typeof api] as any;
       const ResponseJSchema = toJsonSchema(ResponseVSchemas, toJsonConfig);
 
       results[endpoint][method] = { request: RequestJSchema, response: ResponseJSchema };
     }
   }
 
+  console.log("[Schemas] Completed extraction of schemas.");
+
   return results;
 }
 
-/** Extract all method names from the specified SDK client. */
 function getAllMethodsFromClient(endpoint: Endpoint | "subscriptions"): string[] {
   let client: hl.InfoClient | hl.ExchangeClient | hl.SubscriptionClient;
 
@@ -102,100 +80,6 @@ function getAllMethodsFromClient(endpoint: Endpoint | "subscriptions"): string[]
     .filter((name) => name !== "constructor" && typeof client[name as keyof typeof client] === "function");
 
   return methods;
-}
-
-/**
- * Extract Request/Response schema names and JSDoc code examples from the SDK source code
- * @param filePath path to the SDK source code file
- * @param functionName name of the function to extract
- * @param endpoint - endpoint name (info, exchange, subscriptions)
- * @returns object containing request and response schema names and example code from JSDoc
- */
-async function extractFunctionSchema(
-  filePath: string,
-  functionName: string,
-  endpoint: string,
-): Promise<{ request: string; response: string; example: string | undefined }> {
-  // Load SDK source code documentation
-  const url = `https://raw.githubusercontent.com/nktkas/hyperliquid/main/src${filePath}`;
-  const nodes = await doc([url], {
-    resolve(specifier: string, referrer: string): string {
-      // Handle relative imports
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        const referrerUrl = new URL(referrer);
-        return new URL(specifier, referrerUrl).href;
-      }
-
-      // Handle npm packages - map to esm.sh or skypack CDN
-      if (!specifier.startsWith("http://") && !specifier.startsWith("https://")) {
-        return `https://esm.sh/${specifier}`;
-      }
-
-      return specifier;
-    },
-  });
-  const docNodes = nodes[url];
-
-  // Find the function node
-  const functionNode = docNodes.find((node) => node.name === functionName && node.kind === "function");
-  if (!functionNode || functionNode.kind !== "function") {
-    throw new Error(`Function ${functionName} not found in ${filePath}`);
-  }
-
-  // Extract @example from JSDoc
-  const exampleTag = functionNode.jsDoc?.tags?.find((tag) => tag.kind === "example");
-  const example = exampleTag && "doc" in exampleTag ? exampleTag.doc : undefined;
-
-  // Find schema
-  const functionNameUpperCase = replaceFirstCharToUpperCase(functionName);
-  const endpointUpperCase = replaceFirstCharToUpperCase(endpoint);
-
-  // Find request schema by name
-  let requestNode = docNodes.find((node) => node.name === `${functionNameUpperCase}Request`);
-  if (!requestNode) { // try `{FunctionName}{Endpoint}Request` pattern
-    requestNode = docNodes.find((node) => node.name === `${functionNameUpperCase}${endpointUpperCase}Request`);
-  }
-  if (!requestNode) {
-    throw new Error(`Request type name not found in ${filePath}`);
-  }
-
-  // Find response schema by name
-  let responseNode = docNodes.find((node) => node.name === `${functionNameUpperCase}Response`);
-  if (!responseNode) { // try `{FunctionName}{Endpoint}Response` pattern
-    responseNode = docNodes.find((node) => node.name === `${functionNameUpperCase}${endpointUpperCase}Response`);
-  }
-  if (!responseNode) { // try extract from function return type
-    const returnType = functionNode.functionDef.returnType;
-    if (!returnType || returnType.kind !== "typeRef" || returnType.typeRef.typeName !== "Promise") {
-      throw new Error(`Function ${functionName} does not return Promise in ${filePath}`);
-    }
-
-    const typeParams = returnType.typeRef.typeParams;
-    if (!typeParams || typeParams.length === 0 || typeParams[0].kind !== "typeRef") {
-      throw new Error(`Cannot extract response type from Promise in ${filePath}`);
-    }
-
-    const responseTypeName = typeParams[0].typeRef.typeName;
-    if (!responseTypeName) {
-      throw new Error(`Response type name not found in ${filePath}`);
-    }
-
-    responseNode = docNodes.find((node) => node.name === responseTypeName);
-  }
-
-  if (!responseNode) {
-    throw new Error(`Response type name not found in ${filePath}`);
-  }
-
-  // Extract scheme names from nodes
-  const requestTypeName = requestNode.name;
-  const responseTypeName = responseNode.name.replace(/(.+)SuccessResponse$/, "$1Response");
-
-  return {
-    request: requestTypeName,
-    response: responseTypeName,
-    example,
-  };
 }
 
 function replaceFirstCharToUpperCase(str: string): string {
@@ -456,7 +340,7 @@ if (import.meta.main) {
     throw new Error("GITBOOK_TOKEN and GITBOOK_ORG_ID must be set in environment variables.");
   }
 
-  const schemas = await getAllSchemas();
+  const schemas = getAllSchemas();
   const openapiSpecs = await jsonSchemasToOpenAPIs(schemas);
   await updateSummary(openapiSpecs);
   await updateGitBookOpenAPIs(openapiSpecs, GITBOOK_TOKEN, GITBOOK_ORG_ID);
